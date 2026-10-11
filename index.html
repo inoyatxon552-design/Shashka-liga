@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="uz"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shashka ligasi</title>
+<link href="https://fonts.googleapis.com/css2?family=Bitter:wght@400;700&family=Nunito:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#1d1a17;--pn:#2a2622;--tx:#f3ead9;--mu:#a89c88;--ac:#d9a441;--bl:#2f6fdb;--dk:#7b4a2c;--lt:#efd9b0}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px Nunito,sans-serif}
+h1,h2{font-family:Bitter,serif;margin:0 0 10px}
+button{font:inherit;cursor:pointer;border:0;border-radius:6px;padding:7px 12px;background:var(--ac);color:#201a10;font-weight:700}
+button:disabled{opacity:.35;cursor:default}button.g{background:#443d35;color:var(--tx)}
+input{font:inherit;padding:9px;border-radius:6px;border:1px solid #5a5148;background:#15120f;color:var(--tx);width:100%;margin:5px 0 10px}
+#login{max-width:360px;margin:12vh auto;padding:24px;background:var(--pn);border-radius:10px}
+#err{color:#ff8a7a;min-height:20px}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;background:var(--pn);gap:10px;flex-wrap:wrap}
+main{display:grid;grid-template-columns:minmax(300px,1fr) 400px;gap:18px;padding:18px;max-width:1150px;margin:auto}
+@media(max-width:860px){main{grid-template-columns:1fr}}
+.card{background:var(--pn);border-radius:10px;padding:14px;margin-bottom:14px}
+#bd{display:grid;grid-template-columns:repeat(8,1fr);width:min(100%,560px);aspect-ratio:1;margin:10px auto;border:6px solid #3b2a1c}
+.c{position:relative;display:flex;align-items:center;justify-content:center}
+.c.d{background:var(--dk)}.c.l{background:var(--lt)}
+.c.t::after{content:"";width:28%;height:28%;border-radius:50%;background:rgba(255,255,255,.55);position:absolute}
+.c.s{outline:4px solid var(--ac);outline-offset:-4px}
+.p{width:80%;height:80%;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:150%;box-shadow:0 3px 0 rgba(0,0,0,.45)}
+.p.w{background:#fbf6ea;border:3px solid #cdbf9f;color:#b8860b}
+.p.b{background:#262626;border:3px solid #000;color:#e6b84c}
+.p.x{opacity:.3}.p.r{outline:4px solid #ff3b2f;animation:bl .6s infinite alternate}
+@keyframes bl{to{outline-color:transparent}}
+#msg{min-height:26px;text-align:center;font-weight:700}
+#msg.chip{color:#ff6a5a;font-size:1.25em}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{color:var(--mu);font-weight:400;text-align:center}td,th{padding:6px 3px;text-align:center}
+td:nth-child(2),th:nth-child(2){text-align:left}
+tr.top td{background:rgba(47,111,219,.35);font-weight:700}tr.top td:first-child{box-shadow:inset 4px 0 var(--bl)}
+tr.me td:nth-child(2){color:var(--ac)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#555;margin-right:5px}.dot.on{background:#46d17a}
+.gl div{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #3a342d;font-size:14px}
+small{color:var(--mu)}
+</style></head><body>
+<div id="login">
+ <h1>Shashka ligasi</h1>
+ <label>Guruh nomi (hamma uchun bitta)</label><input id="grp" value="Liga">
+ <label>Sizning ismingiz</label><input id="nm" maxlength="20">
+ <button onclick="login()">Kirish</button><div id="err"></div>
+</div>
+<div id="app" hidden>
+ <header><b id="who"></b><button class="g" onclick="logout()">Chiqish</button></header>
+ <main>
+  <section>
+   <div class="card" id="gp"><small>Jadvaldan raqib tanlab «O'ynash» tugmasini bosing.</small></div>
+   <div class="card"><h2>O'yinlar</h2><div class="gl" id="gl"></div></div>
+  </section>
+  <aside class="card"><h2>Liga jadvali</h2>
+   <table><thead><tr><th>#</th><th>Ishtirokchi</th><th>O'</th><th>Och</th><th>±Don</th><th></th></tr></thead><tbody id="tb"></tbody></table>
+   <small>Ko'k — hozirgi eng kuchli uchlik. G'alaba 3, durang 1, mag'lubiyat 0. Ochko teng bo'lsa donalar farqi hal qiladi. Har kim 8 ta o'yin o'ynaydi.</small>
+  </aside>
+ </main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script>
+
+const $=s=>document.querySelector(s);
+const clean=s=>s.trim().replace(/[^\p{L}\p{N}_ -]/gu,'').slice(0,20);
+let G,ME,players={},games={},cur=null,sel=null,refs=[];
+let INIT='';for(let r=0;r<8;r++)for(let c=0;c<8;c++)INIT+=(r+c)%2?(r<3?'b':r>4?'w':'.'):'.';
+
+/* ---------- Qoidalar (rus shashkasi) ---------- */
+const D=[[-1,-1],[-1,1],[1,-1],[1,1]],In=(y,x)=>y>=0&&y<8&&x>=0&&x<8;
+const mine=(b,i,t)=>b[i]!='.'&&b[i].toLowerCase()==t;
+const pieces=(b,t)=>{const o=[];for(let i=0;i<64;i++)if(mine(b,i,t))o.push(i);return o};
+function simple(b,i){const p=b[i],k=p!=p.toLowerCase(),o=[];
+ for(const[dr,dc]of D){if(!k&&dr!=(p=='w'?-1:1))continue;let y=(i>>3)+dr,x=(i&7)+dc;
+  while(In(y,x)&&b[y*8+x]=='.'){o.push(y*8+x);if(!k)break;y+=dr;x+=dc}}return o}
+function jumps(b,i,dead){const p=b[i],me=p.toLowerCase(),k=p!=me,o=[];
+ for(const[dr,dc]of D){let y=(i>>3)+dr,x=(i&7)+dc;
+  if(k)while(In(y,x)&&b[y*8+x]=='.'){y+=dr;x+=dc}
+  if(!In(y,x))continue;const j=y*8+x,q=b[j];
+  if(q=='.'||q.toLowerCase()==me||dead.includes(j))continue;
+  let ly=y+dr,lx=x+dc;
+  while(In(ly,lx)&&b[ly*8+lx]=='.'){o.push({to:ly*8+lx,cap:j});if(!k)break;ly+=dr;lx+=dc}}
+ return o}
+function apply(b,f,m,dead){b=b.slice();let p=b[f];b[f]='.';const r=m.to>>3;
+ if(p=='w'&&r==0)p='W';if(p=='b'&&r==7)p='B';b[m.to]=p;return{b,dead:[...dead,m.cap],pos:m.to}}
+function legalJumps(b,i,dead){const by={};jumps(b,i,dead).forEach(m=>(by[m.cap]=by[m.cap]||[]).push(m));
+ const out=[];for(const k in by){const g=by[k];const c=g.filter(m=>{const a=apply(b,i,m,dead);return jumps(a.b,a.pos,a.dead).length});out.push(...(c.length?c:g))}return out}
+const other=t=>t=='w'?'b':'w',nm=(g,t)=>t=='w'?g.w:g.b;
+
+function endcheck(g){
+ if(g.chip.length||g.ch>=0)return g;const b=g.bd.split('');
+ const W=pieces(b,'w'),B=pieces(b,'b');
+ if(W.length==1&&B.length==1&&b[W[0]]=='w'&&b[B[0]]=='b')
+  return{...g,st:'done',res:'d',wl:0,msg:'Durang: ikkala tomonda bittadan oddiy dona qoldi'};
+ const my=pieces(b,g.t);
+ if(!my.some(i=>legalJumps(b,i,[]).length||simple(b,i).length)){
+  const w=other(g.t);return{...g,st:'done',res:w,wl:pieces(b,w).length,msg:nm(g,w)+' g\'alaba qozondi!'}}
+ return g}
+function fin(g,b,x){return endcheck({...g,...x,bd:b.join(''),t:other(g.t),v:(g.v||0)+1})}
+
+function step(g,f,to){
+ let b=g.bd.split(''),dead=g.dead.slice();
+ if(g.ch>=0&&f!=g.ch)return null;
+ const jm=legalJumps(b,f,dead).find(m=>m.to==to);
+ if(jm){const a=apply(b,f,jm,dead);b=a.b;dead=a.dead;
+  if(jumps(b,a.pos,dead).length)return{...g,bd:b.join(''),dead,ch:a.pos,msg:'',v:(g.v||0)+1};
+  dead.forEach(j=>b[j]='.');return fin(g,b,{dead:[],ch:-1,chip:[],msg:''})}
+ if(g.ch>=0||!simple(b,f).includes(to))return null;
+ const caps=pieces(b,g.t).filter(i=>legalJumps(b,i,[]).length);
+ const p=b[f];b[f]='.';const r=to>>3;b[to]=(p=='w'&&r==0)?'W':(p=='b'&&r==7)?'B':p;
+ let chip=caps.map(i=>i==f?to:i),msg='';
+ if(chip.length==1){b[chip[0]]='.';chip=[];msg='CHIPPAKI! '+nm(g,g.t)+' urishi kerak edi — dona raqibga berildi'}
+ else if(chip.length>1)msg='CHIPPAKI! '+nm(g,g.t)+' urishi kerak edi — '+nm(g,other(g.t))+' olinadigan donani tanlasin';
+ return fin(g,b,{chip,msg})}
+
+/* ---------- Ulanish (ro'yxatdan o'tish shart emas) ---------- */
+const BROKER='wss://broker.hivemq.com:8884/mqtt',PRE='shashka-uz-liga-v1/';
+let cl=null,online={};
+const err=m=>$('#err').textContent=m;
+const pub=(path,o)=>cl.publish(PRE+G+'/'+path,JSON.stringify(o),{retain:true});
+function connect(g,n){return new Promise(res=>{
+ cl=mqtt.connect(BROKER,{will:{topic:PRE+g+'/online/'+n,payload:'0',retain:true},reconnectPeriod:2000});
+ cl.on('connect',()=>{cl.subscribe(PRE+g+'/#');cl.publish(PRE+g+'/online/'+n,'1',{retain:true});res()});
+ cl.on('message',(t,m)=>{const p=t.slice(PRE.length+g.length+1).split('/'),s=m.toString();
+  try{if(p[0]=='players'){s?players[p[1]]=JSON.parse(s):delete players[p[1]]}
+  else if(p[0]=='games'){if(s){const o=JSON.parse(s);o.dead=o.dead||[];o.chip=o.chip||[];games[p[1]]=o}else delete games[p[1]]}
+  else if(p[0]=='online')online[p[1]]=s=='1'}catch(e){}
+  render()});
+ cl.on('error',()=>err('Ulanib bo\'lmadi. Internetni tekshiring'));
+ setTimeout(res,8000)})}
+async function login(){
+ const g=clean($('#grp').value),n=clean($('#nm').value);if(!g||!n)return err('Guruh va ismni kiriting');
+ let tok;try{tok=localStorage.tok||(localStorage.tok=Math.random().toString(36).slice(2))}catch(e){tok=Math.random().toString(36).slice(2)}
+ err('Ulanmoqda...');G=g;ME=n;players={};games={};online={};
+ await connect(g,n);await new Promise(r=>setTimeout(r,1500));
+ const bad=m=>{cl.end(true);G=null;err(m)};
+ if(!players[n]&&Object.keys(players).length>=16)return bad('Guruhda 16 ta ishtirokchi to\'lgan');
+ if(players[n]&&players[n].tok!=tok)return bad('Bu ism band (boshqa qurilmada)');
+ if(!players[n]){players[n]={tok};pub('players/'+n,{tok})}
+ try{localStorage.g=g;localStorage.n=n}catch(e){}
+ start()}
+function logout(){cl.publish(PRE+G+'/online/'+ME,'0',{retain:true});try{localStorage.removeItem('n')}catch(e){}location.reload()}
+function start(){$('#login').hidden=true;$('#app').hidden=false;$('#who').textContent=`Guruh: ${G} · Siz: ${ME}`;render()}
+try{if(localStorage.n){$('#grp').value=localStorage.g;$('#nm').value=localStorage.n;login()}}catch(e){}
+
+/* ---------- O'yin boshlash ---------- */
+const cnt=p=>Object.values(games).filter(g=>g.w==p||g.b==p).length;
+const key=(a,b)=>[a,b].sort().join('~');
+async function play(opp){
+ if(cnt(ME)>=8)return alert('Siz 8 ta o\'yin limitiga yetgansiz');
+ if(cnt(opp)>=8)return alert(opp+' 8 ta o\'yin limitiga yetgan');
+ const k=key(ME,opp),wh=Math.random()<.5;if(games[k])return alert('Bu juftlik o\'ynagan');
+ const g={w:wh?ME:opp,b:wh?opp:ME,bd:INIT,t:'w',ch:-1,dead:[],chip:[],st:'play',v:0,msg:'O\'yin boshlandi. Oq yuradi'};
+ games[k]=g;pub('games/'+k,g);cur=k;sel=null;render()}
+const open=k=>{cur=k;sel=null;render()};
+
+/* ---------- Jadval ---------- */
+function stats(){const s={};Object.keys(players).forEach(p=>s[p]={n:p,o:0,g:0,d:0,m:0,pt:0,df:0});
+ Object.values(games).forEach(g=>{if(g.st!='done'||!s[g.w]||!s[g.b])return;s[g.w].o++;s[g.b].o++;
+  if(g.res=='d'){[g.w,g.b].forEach(x=>{s[x].d++;s[x].pt++})}
+  else{const W=g.res=='w'?g.w:g.b,L=W==g.w?g.b:g.w;s[W].g++;s[W].pt+=3;s[W].df+=g.wl;s[L].m++;s[L].df-=g.wl}});
+ return Object.values(s).sort((a,b)=>b.pt-a.pt||b.df-a.df||b.g-a.g)}
+function table(){$('#tb').innerHTML=stats().map((s,i)=>{
+ const pr=!!games[key(ME,s.n)],can=s.n!=ME&&!pr&&cnt(ME)<8&&cnt(s.n)<8;
+ const btn=s.n==ME?'':pr?`<button class="g" onclick="open('${key(ME,s.n).replace(/'/g,"\\'")}')">Ko'rish</button>`:`<button ${can?'':'disabled'} data-p="${s.n}">O'ynash</button>`;
+ return`<tr class="${i<3?'top':''} ${s.n==ME?'me':''}"><td>${i+1}</td><td><span class="dot ${online[s.n]?'on':''}"></span>${s.n}</td><td>${s.o}/8</td><td>${s.pt}</td><td>${s.df>0?'+':''}${s.df}</td><td>${btn}</td></tr>`}).join('')}
+$('#tb').addEventListener('click',e=>{const p=e.target.dataset.p;if(p)play(p)});
+
+/* ---------- O'yin oynasi ---------- */
+function targets(g,i){const b=g.bd.split('');
+ if(g.dead.includes(i))return[];
+ const j=legalJumps(b,i,g.dead).map(m=>m.to);return g.ch>=0?(i==g.ch?j:[]):[...j,...simple(b,i)]}
+function save(n){games[cur]=n;pub('games/'+cur,n);render()}
+function onCell(i){const g=games[cur];if(!g||g.st!='play'||nm(g,g.t)!=ME)return;
+ if(g.chip.length){if(g.chip.includes(i)){const b=g.bd.split('');b[i]='.';
+   save(endcheck({...g,bd:b.join(''),chip:[],msg:'CHIPPAKI! '+nm(g,other(g.t))+' donani raqibga berdi',v:g.v+1}))}return}
+ if(sel!=null&&targets(g,sel).includes(i)){const n=step(g,sel,i);sel=n&&n.ch>=0?n.ch:null;if(n)save(n);return}
+ sel=mine(g.bd,i,g.t)&&!g.dead.includes(i)&&(g.ch<0||g.ch==i)?i:null;render()}
+function resign(){const g=games[cur];if(!confirm('Taslim bo\'lasizmi?'))return;const w=g.w==ME?'b':'w';
+ save({...g,st:'done',res:w,wl:pieces(g.bd.split(''),w).length,msg:ME+' taslim bo\'ldi'})}
+function boardView(){const g=games[cur];if(!g){$('#gp').innerHTML='<small>Jadvaldan raqib tanlab «O\'ynash» tugmasini bosing.</small>';return}
+ const flip=g.b==ME,tg=sel!=null&&g.st=='play'?targets(g,sel):[],mt=nm(g,g.t)==ME;
+ let h='';for(let d=0;d<64;d++){const i=flip?63-d:d,p=g.bd[i],dk=((i>>3)+(i&7))%2;
+  h+=`<div class="c ${dk?'d':'l'} ${tg.includes(i)?'t':''} ${sel==i?'s':''}" data-i="${i}">`+
+   (p!='.'?`<div class="p ${p.toLowerCase()} ${g.dead.includes(i)?'x':''} ${g.chip.includes(i)?'r':''}">${p!=p.toLowerCase()?'♛':''}</div>`:'')+'</div>'}
+ const st=g.st=='done'?(g.res=='d'?'Durang (1:1 ochko)':`G'olib: ${nm(g,g.res)} (+${g.wl} dona)`):
+  g.chip.length&&mt?'Qizil donalardan birini tanlang':`${nm(g,g.t)} yuradi (${g.t=='w'?'oq':'qora'})`;
+ const mem=g.w==ME||g.b==ME;
+ $('#gp').innerHTML=`<h2>Oq: ${g.w} — Qora: ${g.b}</h2><div><b>${st}</b>${mem&&g.st=='play'&&mt?' — sizning yurishingiz':''}</div>
+  <div id="msg" class="${g.msg.startsWith('CHIPPAKI')?'chip':''}">${g.msg||''}</div><div id="bd">${h}</div>
+  <div style="text-align:center">${mem&&g.st=='play'?'<button class="g" onclick="resign()">Taslim bo\'lish</button> ':''}<button class="g" onclick="cur=null;render()">Yopish</button></div>`;
+ $('#bd').onclick=e=>{const c=e.target.closest('.c');if(c)onCell(+c.dataset.i)}}
+function list(){const e=Object.entries(games).sort((a,b)=>(b[1].v||0)-(a[1].v||0));
+ $('#gl').innerHTML=e.map(([k,g])=>`<div><span>${g.w} — ${g.b} <small>${g.st=='done'?(g.res=='d'?'durang':nm(g,g.res)+' yutdi'):'o\'ynalmoqda'}</small></span><button class="g" data-k="${k}">${g.w==ME||g.b==ME?'Ochish':'Kuzatish'}</button></div>`).join('')||'<small>Hozircha o\'yin yo\'q</small>'}
+$('#gl').addEventListener('click',e=>{const k=e.target.dataset.k;if(k)open(k)});
+function render(){if(!G)return;table();list();boardView()}
+</script></body></html>
